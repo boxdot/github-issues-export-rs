@@ -221,6 +221,11 @@ fn parse_args() -> Args {
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
 
+    if args.flag_version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
     args.env_token = std::env::var("GITHUB_TOKEN").unwrap_or_else(|_| {
         eprintln!("Missing obligatory environment variable GITHUB_TOKEN");
         std::process::exit(1);
@@ -256,10 +261,6 @@ fn parse_args() -> Args {
 
 fn run() -> Result<()> {
     let args = parse_args();
-    if args.flag_version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
-    }
 
     let mut core = tokio_core::reactor::Core::new()?;
     let handle = core.handle();

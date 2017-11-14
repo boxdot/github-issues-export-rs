@@ -1,4 +1,4 @@
-# gh2md
+# gh2md [![Build Status](https://travis-ci.org/boxdot/gh2md-rs.svg?branch=master)](https://travis-ci.org/boxdot/gh2md-rs)
 Export GitHub issues to markdown files.
 
 ## Usage:

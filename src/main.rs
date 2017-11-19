@@ -1,9 +1,8 @@
-#![feature(conservative_impl_trait)]
+#![feature(proc_macro, conservative_impl_trait, generators)]
 
 extern crate docopt;
 #[macro_use]
 extern crate error_chain;
-extern crate futures;
 extern crate handlebars;
 extern crate hyper;
 extern crate hyper_tls;
@@ -14,6 +13,9 @@ extern crate serde_json;
 extern crate serde_derive;
 extern crate slug;
 extern crate tokio_core;
+extern crate futures_await as futures;
+
+use futures::prelude::*;
 
 use docopt::Docopt;
 use futures::Stream;
@@ -73,6 +75,29 @@ impl Github {
             user_agent: agent,
             token: Authorization(format!("token {}", token)),
         })
+    }
+
+    #[async]
+    pub fn get_async(&self, endpoint: &str) -> Result<String> {
+        let url = Uri::from_str(endpoint).expect("Could not parse uri");
+        let mut req = Request::new(Method::Get, url);
+        req.headers_mut().set(self.user_agent.clone());
+        req.headers_mut().set(self.token.clone());
+        req.headers_mut().set(ContentType::json());
+        req.headers_mut().set(ContentLength(0));
+        let resp = await!(self.client.request(req))?;
+        if !resp.status().is_success() {
+            return Err(ErrorKind::Request(String::from("request failed")).into());
+        }
+        let body = await!(resp.body().concat2())?;
+        let string = match std::str::from_utf8(&body) {
+            Ok(s) => String::from(s),
+            Err(_) => String::from("foo"),
+        };
+        let value: T = ::serde_json::from_slice(&body).chain_err(
+            || "Could not parse response from server",
+        )?;
+        Ok(value)
     }
 
     pub fn get<T>(&self, endpoint: &str) -> impl Future<Item = T, Error = Error>

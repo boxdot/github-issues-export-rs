@@ -6,3 +6,17 @@ script:
   - cargo build --verbose --all
   - cargo test --verbose --all
   - cargo run -- --version
+
+addons:
+  apt:
+    packages:
+      - libcurl4-openssl-dev
+      - libelf-dev
+      - libdw-dev
+      - cmake
+      - gcc
+      - binutils-dev
+      - libiberty-dev
+
+after_success:
+  - sh coverage.sh

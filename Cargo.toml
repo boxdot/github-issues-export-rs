@@ -4,6 +4,13 @@ version = "0.1.0"
 authors = ["boxdot <d@zerovolt.org>"]
 description = "Export GitHub issues to markdown files."
 license = "MIT/Apache-2.0"
+repository = "https://github.com/boxdot/github-issues-export-rs"
+keywords = ["markdown", "github", "issues"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+
+[badges]
+travis-ci = { repository = "boxdot/github-issues-export-rs" }
 
 [dependencies]
 docopt = "0.8"

@@ -1,7 +1,9 @@
 [package]
-name = "gh2md"
+name = "github-issues-export"
 version = "0.1.0"
 authors = ["boxdot <d@zerovolt.org>"]
+description = "Export GitHub issues to markdown files."
+license = "MIT/Apache-2.0"
 
 [dependencies]
 docopt = "0.8"

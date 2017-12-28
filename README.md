@@ -1,11 +1,11 @@
-# gh2md [![Build Status](https://travis-ci.org/boxdot/gh2md-rs.svg?branch=master)](https://travis-ci.org/boxdot/gh2md-rs)
+# github-issues-export [![Build Status](https://travis-ci.org/boxdot/github-issues-export-rs.svg?branch=master)](https://travis-ci.org/boxdot/github-issues-export-rs)
 Export GitHub issues to markdown files.
 
 ## Usage:
 
 ```
 export GITHUB_TOKEN=<your_secret_token>
-gh2md username/repo[#issue_number]
+github-issues-export username/repo[#issue_number]
 ```
 
 This will export all open issues from GitHub repository `username/repo` into directory `./md`

@@ -166,9 +166,9 @@ const USAGE: &'static str = r#"
 Export issues from GitHub into markdown files.
 
 Usage:
-  gh2md [options] <query>
-  gh2md (-h | --help)
-  gh2md --version
+  github-issues-export [options] <query>
+  github-issues-export (-h | --help)
+  github-issues-export --version
 
 <query> is of the form: username/repo[#issue_number].
 

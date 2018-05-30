@@ -15,17 +15,17 @@ extern crate tokio_core;
 
 use docopt::Docopt;
 use futures::Stream;
-use futures::{Future, future};
+use futures::{future, Future};
 use handlebars::Handlebars;
-use hyper::{Client, Method, Uri, Request};
-use hyper::header::{ContentType, ContentLength, Authorization, UserAgent};
+use hyper::header::{Authorization, ContentLength, ContentType, UserAgent};
+use hyper::{Client, Method, Request, Uri};
 
-use std::str::FromStr;
-use std::io::Write;
 use std::fmt;
+use std::io::Write;
+use std::str::FromStr;
 
-mod template;
 mod model;
+mod template;
 
 mod errors {
     error_chain!{
@@ -87,14 +87,15 @@ impl Github {
         resp.map_err(Error::from).and_then(|resp| {
             let status_code = resp.status();
             let body = resp.body().concat2().from_err();
-            body.and_then(move |chunk| if !status_code.is_success() {
-                let resp = String::from(::std::str::from_utf8(&chunk)?);
-                Err(ErrorKind::Request(resp).into())
-            } else {
-                let value: T = ::serde_json::from_slice(&chunk).chain_err(
-                    || "Could not parse response from server",
-                )?;
-                Ok(value)
+            body.and_then(move |chunk| {
+                if !status_code.is_success() {
+                    let resp = String::from(::std::str::from_utf8(&chunk)?);
+                    Err(ErrorKind::Request(resp).into())
+                } else {
+                    let value: T = ::serde_json::from_slice(&chunk)
+                        .chain_err(|| "Could not parse response from server")?;
+                    Ok(value)
+                }
             })
         })
     }
@@ -274,18 +275,12 @@ fn run() -> Result<()> {
     )?;
 
     let fut_issues: Box<Future<Item = _, Error = _>> = match args.arg_issue {
-        Some(issue_number) => {
-            Box::new(
-                github
-                    .issue(&args.arg_username, &args.arg_repo, issue_number)
-                    .map(|issue| vec![issue]),
-            )
-        }
-        None => Box::new(github.issues(
-            &args.arg_username,
-            &args.arg_repo,
-            &args.flag_state,
-        )),
+        Some(issue_number) => Box::new(
+            github
+                .issue(&args.arg_username, &args.arg_repo, issue_number)
+                .map(|issue| vec![issue]),
+        ),
+        None => Box::new(github.issues(&args.arg_username, &args.arg_repo, &args.flag_state)),
     };
 
     let fut_issues_with_comments = fut_issues.and_then(|issues| {
@@ -298,12 +293,12 @@ fn run() -> Result<()> {
         }))
     });
     let fut_data = fut_issues_with_comments.map(|issues| {
-        issues.into_iter().map(|(issue, comments)| {
-            model::IssueWithComments {
+        issues
+            .into_iter()
+            .map(|(issue, comments)| model::IssueWithComments {
                 issue: issue,
                 comments: comments,
-            }
-        })
+            })
     });
 
     let issues = core.run(fut_data)?;

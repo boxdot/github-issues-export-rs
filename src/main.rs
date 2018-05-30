@@ -1,5 +1,3 @@
-#![feature(conservative_impl_trait)]
-
 extern crate docopt;
 #[macro_use]
 extern crate error_chain;

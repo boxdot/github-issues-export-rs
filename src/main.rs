@@ -1,192 +1,158 @@
-extern crate docopt;
-#[macro_use]
-extern crate error_chain;
-extern crate futures;
-extern crate handlebars;
-extern crate hyper;
-extern crate hyper_tls;
-extern crate native_tls;
-extern crate serde;
-extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
-extern crate slug;
-extern crate tokio_core;
-
-use docopt::Docopt;
-use futures::Stream;
-use futures::{future, Future};
-use handlebars::Handlebars;
-use hyper::header::{Authorization, ContentLength, ContentType, UserAgent};
-use hyper::{Client, Method, Request, Uri};
-
-use std::fmt;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::{fmt, io};
+
+use anyhow::{anyhow, bail};
+use argh::FromArgs;
+use futures::StreamExt;
+use handlebars::Handlebars;
+use headers::{
+    authorization::Bearer, Authorization, ContentLength, ContentType, HeaderMapExt, UserAgent,
+};
+use hyper::{
+    client::{Client, HttpConnector},
+    Body, Request,
+};
+use hyper_tls::HttpsConnector;
+use serde::Deserialize;
+use tracing::{debug, info};
 
 mod model;
 mod template;
 
-mod errors {
-    error_chain!{
-        errors {
-            Request(t: String) {
-                description("invalid request name")
-                display("request failed: '{}'", t)
-            }
-        }
-        foreign_links {
-            Docopt(::docopt::Error);
-            Io(::std::io::Error);
-            Hyper(::hyper::Error);
-            HbTemplate(::handlebars::TemplateError);
-            HbRender(::handlebars::RenderError);
-            NativeTls(::native_tls::Error);
-            Json(::serde_json::Error);
-            Utf8(::std::str::Utf8Error);
-        }
-    }
-}
-
-use errors::*;
-
+#[derive(Clone)]
 struct Github {
-    client: Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
+    client: Client<HttpsConnector<HttpConnector>>,
     user_agent: UserAgent,
-    token: Authorization<String>,
+    auth: Authorization<Bearer>,
 }
+
+const API_ENDPOINT: &str = "https://api.github.com";
 
 impl Github {
-    const API_ENDPOINT: &'static str = "https://api.github.com";
-
-    pub fn new(
-        handle: &tokio_core::reactor::Handle,
-        agent: UserAgent,
-        token: &str,
-    ) -> Result<Self> {
+    pub fn new(auth: Authorization<Bearer>) -> anyhow::Result<Self> {
+        let user_agent = UserAgent::from_static(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ));
+        let https = HttpsConnector::new();
+        let client = hyper::Client::builder().build(https);
         Ok(Self {
-            client: hyper::Client::configure()
-                .connector(hyper_tls::HttpsConnector::new(4, handle)?)
-                .build(handle),
-            user_agent: agent,
-            token: Authorization(format!("token {}", token)),
+            client,
+            user_agent,
+            auth,
         })
     }
 
-    pub fn get<T>(&self, endpoint: &str) -> impl Future<Item = T, Error = Error>
+    async fn get<T>(&self, endpoint: &str) -> anyhow::Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
-        let url = Uri::from_str(endpoint).expect("Could not parse uri");
-        let mut req = Request::new(Method::Get, url);
-        req.headers_mut().set(self.user_agent.clone());
-        req.headers_mut().set(self.token.clone());
-        req.headers_mut().set(ContentType::json());
-        req.headers_mut().set(ContentLength(0));
-        let resp = self.client.request(req);
-        resp.map_err(Error::from).and_then(|resp| {
-            let status_code = resp.status();
-            let body = resp.body().concat2().from_err();
-            body.and_then(move |chunk| {
-                if !status_code.is_success() {
-                    let resp = String::from(::std::str::from_utf8(&chunk)?);
-                    Err(ErrorKind::Request(resp).into())
-                } else {
-                    let value: T = ::serde_json::from_slice(&chunk)
-                        .chain_err(|| "Could not parse response from server")?;
-                    Ok(value)
-                }
-            })
-        })
+        let mut req = Request::get(endpoint);
+        if let Some(headers) = req.headers_mut() {
+            headers.typed_insert(self.user_agent.clone());
+            headers.typed_insert(self.auth.clone());
+            headers.typed_insert(ContentType::json());
+        }
+        let req = req.body(Body::empty())?;
+
+        debug!(?req, "request");
+        let resp = self.client.request(req).await?;
+        let status = resp.status();
+        let body_bytes = hyper::body::to_bytes(resp.into_body()).await?;
+
+        if status.is_success() {
+            Ok(serde_json::from_slice(&body_bytes)?)
+        } else {
+            bail!("request failed: {}", String::from_utf8_lossy(&body_bytes));
+        }
     }
 
-    pub fn issue(
+    async fn issue(
         &self,
-        user: &str,
-        repo: &str,
-        number: usize,
-    ) -> impl Future<Item = model::Issue, Error = errors::Error> {
-        self.get(&format!(
-            "{}/repos/{owner}/{repo}/issues/{number}",
-            Self::API_ENDPOINT,
-            owner = user,
-            repo = repo,
-            number = number
-        ))
-    }
-
-    pub fn issues(
-        &self,
-        user: &str,
-        repo: &str,
-        state: &State,
-    ) -> impl Future<Item = Vec<model::Issue>, Error = errors::Error> {
-        self.get(&format!(
-            "{}/repos/{}/{}/issues?state={}",
-            Self::API_ENDPOINT,
-            user,
+        Query {
+            username,
             repo,
-            state
+            issue,
+        }: &Query,
+    ) -> anyhow::Result<model::Issue> {
+        let issue = issue.expect("logic error: querying issue without issue number");
+        self.get(&format!(
+            "{API_ENDPOINT}/repos/{username}/{repo}/issues/{issue}",
         ))
+        .await
+    }
+
+    async fn issues(
+        &self,
+        Query {
+            username,
+            repo,
+            issue,
+        }: &Query,
+        state: State,
+    ) -> anyhow::Result<Vec<model::Issue>> {
+        self.get(&format!(
+            "{API_ENDPOINT}/repos/{username}/{repo}/issues?state={state}",
+        ))
+        .await
     }
 }
 
-fn mkdir(path: &str) -> Result<()> {
-    if let Err(err) = std::fs::create_dir(path) {
-        match err.kind() {
+fn mkdir(path: impl AsRef<Path>) -> io::Result<()> {
+    if let Err(e) = std::fs::create_dir(path) {
+        match e.kind() {
             std::io::ErrorKind::AlreadyExists => (),
             _ => {
-                return Err(Error::from(err));
+                return Err(e);
             }
         }
     };
     Ok(())
 }
 
-fn issue_to_filename(path: &str, issue: &model::Issue) -> String {
+fn issue_to_filename(path: impl AsRef<Path>, issue: &model::Issue) -> String {
     format!(
         "{}/{:03}-{}.md",
-        path,
+        path.as_ref().display(),
         issue.number,
         slug::slugify(&issue.title),
     )
 }
 
-fn serialize(path: &str, hb: &mut Handlebars, data: &model::IssueWithComments) -> Result<()> {
+fn serialize(
+    path: impl AsRef<Path>,
+    hb: &mut Handlebars,
+    data: &model::IssueWithComments,
+) -> anyhow::Result<()> {
     let md = hb.render("issue", &data)?;
     let filename = issue_to_filename(path, &data.issue);
     let mut f = std::fs::File::create(&filename)?;
-    println!("Writing name {}", filename);
+    info!("Writing name {}", filename);
     f.write_all(md.as_bytes())?;
     Ok(())
 }
-
-const USAGE: &'static str = r#"
-Export issues from GitHub into markdown files.
-
-Usage:
-  github-issues-export [options] <query>
-  github-issues-export (-h | --help)
-  github-issues-export --version
-
-<query> is of the form: username/repo[#issue_number].
-
-Environment variables:
-  GITHUB_TOKEN      Authorization token for GitHub.
-
-Options:
-  -h --help                         Show this screen.
-  --version                         Show version.
-  -p --path=<directory>             Output directory [default: ./md].
-  -s --state=<open|closed|all>      Fetch issues that are open, closed, or
-                                    both [default: open].
-"#;
 
 #[derive(Debug, Deserialize)]
 enum State {
     Open,
     Closed,
     All,
+}
+
+impl FromStr for State {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "open" => Self::Open,
+            "closed" => Self::Closed,
+            "all" => Self::All,
+            _ => bail!("unknown state: {s}"),
+        })
+    }
 }
 
 impl fmt::Display for State {
@@ -199,132 +165,100 @@ impl fmt::Display for State {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// Export issues from GitHub into markdown files.
+///
+/// Requires environment variable GITHUB_TOKEN (in environment or .env file)
+#[derive(Debug, FromArgs)]
 struct Args {
-    flag_version: bool,
-    #[serde(skip)]
-    env_token: String,
-    arg_query: String,
-    #[serde(skip)]
-    arg_username: String,
-    #[serde(skip)]
-    arg_repo: String,
-    #[serde(skip)]
-    arg_issue: Option<usize>,
-    flag_path: String,
-    flag_state: State,
+    /// output directory [default: ./md]
+    #[argh(option, short = 'p', default = "PathBuf::from(\"./md\")")]
+    path: PathBuf,
+    /// fetch issues that are open, closed, or both [default: open]
+    #[argh(option, short = 's', default = "State::Open")]
+    state: State,
+    /// query of the form: username/repo[#issue_number]
+    #[argh(positional)]
+    query: Query,
 }
 
-fn parse_args() -> Args {
-    let mut args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit());
-
-    if args.flag_version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
-    }
-
-    args.env_token = std::env::var("GITHUB_TOKEN").unwrap_or_else(|_| {
-        eprintln!("Missing obligatory environment variable GITHUB_TOKEN");
-        std::process::exit(1);
-    });
-
-    {
-        let parts: Vec<_> = args.arg_query.split("/").collect();
-        if parts.len() != 2 {
-            eprintln!("Wrong argument: {}.\n\n{}", args.arg_query, USAGE);
-            std::process::exit(1);
-        }
-        args.arg_username = String::from(parts[0]);
-        let parts: Vec<_> = parts[1].split("#").collect();
-        if parts.len() == 1 {
-            args.arg_repo = String::from(parts[0]);
-        } else if parts.len() == 2 {
-            args.arg_repo = String::from(parts[0]);
-            args.arg_issue = match parts[1].parse::<usize>() {
-                Ok(value) => Some(value),
-                Err(_) => {
-                    eprintln!("Wrong argument: {}.\n\n{}", args.arg_query, USAGE);
-                    std::process::exit(1);
-                }
-            }
-        } else {
-            eprintln!("Wrong argument: {}.\n\n{}", args.arg_query, USAGE);
-            std::process::exit(1);
-        }
-    }
-
-    args
+#[derive(Debug)]
+struct Query {
+    username: String,
+    repo: String,
+    issue: Option<usize>,
 }
 
-fn run() -> Result<()> {
-    let args = parse_args();
+impl FromStr for Query {
+    type Err = anyhow::Error;
 
-    let mut core = tokio_core::reactor::Core::new()?;
-    let handle = core.handle();
-
-    let github = Github::new(
-        &handle,
-        UserAgent::new(format!(
-            "{}/{}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        )),
-        &args.env_token,
-    )?;
-
-    let fut_issues: Box<Future<Item = _, Error = _>> = match args.arg_issue {
-        Some(issue_number) => Box::new(
-            github
-                .issue(&args.arg_username, &args.arg_repo, issue_number)
-                .map(|issue| vec![issue]),
-        ),
-        None => Box::new(github.issues(&args.arg_username, &args.arg_repo, &args.flag_state)),
-    };
-
-    let fut_issues_with_comments = fut_issues.and_then(|issues| {
-        future::join_all(issues.into_iter().map(|issue| {
-            let comments_url = issue.comments_url.clone();
-            Future::join(
-                future::ok(issue),
-                github.get::<Vec<model::Comment>>(&comments_url),
-            )
-        }))
-    });
-    let fut_data = fut_issues_with_comments.map(|issues| {
-        issues
-            .into_iter()
-            .map(|(issue, comments)| model::IssueWithComments {
-                issue: issue,
-                comments: comments,
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (username, repo) = s
+            .split_once('/')
+            .ok_or_else(|| anyhow!("invalid query: {s}"))?;
+        let (repo, issue) = repo
+            .split_once('#')
+            .map(|(repo, issue)| (repo, Some(issue)))
+            .unwrap_or_else(|| (repo, None));
+        let issue = issue
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| anyhow!("failed to parse issue {s} as integer"))
             })
-    });
+            .transpose()?;
+        Ok(Self {
+            username: username.to_string(),
+            repo: repo.to_string(),
+            issue,
+        })
+    }
+}
 
-    let issues = core.run(fut_data)?;
+const MAX_PARALLEL_FETCHES: usize = 8;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = init();
+    let token = dotenv::var("GITHUB_TOKEN")
+        .map_err(|_| anyhow!("missing obligatory environment variable GITHUB_TOKEN"))?;
+
+    let auth = Authorization::bearer(&token)?;
+    let github = Github::new(auth)?;
 
     let mut reg = Handlebars::new();
     reg.register_template_string("issue", template::TEMPLATE)?;
 
-    mkdir(&args.flag_path)?;
-    for data in issues.into_iter() {
-        serialize(&args.flag_path, &mut reg, &data)?;
+    let issues: Vec<model::Issue> = if args.query.issue.is_some() {
+        let issue = github.issue(&args.query).await?;
+        vec![issue]
+    } else {
+        github.issues(&args.query, args.state).await?
+    };
+
+    let mut issues = futures::stream::iter(issues.into_iter().map(|issue| {
+        let github = github.clone();
+        async move {
+            let comments: Vec<model::Comment> = github.get(&issue.comments_url).await?;
+            Ok::<_, anyhow::Error>(model::IssueWithComments { issue, comments })
+        }
+    }))
+    .buffer_unordered(MAX_PARALLEL_FETCHES);
+
+    mkdir(&args.path)?;
+
+    while let Some(data) = issues.next().await {
+        serialize(&args.path, &mut reg, &data?)?;
     }
 
     Ok(())
 }
 
-fn main() {
-    if let Err(ref e) = run() {
-        use std::io::Write;
-        let stderr = &mut ::std::io::stderr();
-        let errmsg = "Error writing to stderr";
-
-        writeln!(stderr, "Error: {}", e).expect(errmsg);
-        for e in e.iter().skip(1) {
-            writeln!(stderr, "Caused by: {}", e).expect(errmsg);
-        }
-
-        ::std::process::exit(1);
+fn init() -> Args {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info")
     }
+    tracing_subscriber::fmt::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    argh::from_env()
 }

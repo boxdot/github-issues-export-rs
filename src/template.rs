@@ -1,4 +1,4 @@
-pub const TEMPLATE: &'static str = r#"# [{{issue.title}}]({{issue.html_url}})
+pub const TEMPLATE: &str = r#"# [{{issue.title}}]({{issue.html_url}})
 
 > state: **{{issue.state}}** opened by: **{{issue.user.login}}** on: **{{issue.created_at}}**
 

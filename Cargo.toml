@@ -1,6 +1,6 @@
 [package]
 name = "github-issues-export"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["boxdot <d@zerovolt.org>"]
 description = "Export GitHub issues to markdown files."
 license = "MIT/Apache-2.0"
@@ -8,20 +8,21 @@ repository = "https://github.com/boxdot/github-issues-export-rs"
 keywords = ["markdown", "github", "issues"]
 categories = ["command-line-utilities"]
 readme = "README.md"
-
-[badges]
-travis-ci = { repository = "boxdot/github-issues-export-rs" }
+edition = "2021"
 
 [dependencies]
-docopt = "0.8"
-error-chain = "0.11"
-futures = "0.1"
-handlebars = "0.29"
-hyper = "0.11"
-hyper-tls = "0.1"
-native-tls = "0.1"
-serde = "1.0"
-serde_derive = "1.0"
-serde_json = "1.0"
-slug = "0.1"
-tokio-core = "0.1"
+anyhow = "1.0.60"
+argh = "0.1.8"
+dotenv = "0.15.0"
+futures = "0.3.21"
+handlebars = "4.3.3"
+headers = "0.3.7"
+hyper = { version = "0.14.20", features = ["client", "http1", "http2"] }
+hyper-tls = "0.5.0"
+serde = { version = "1.0.143", features = ["derive"] }
+serde_derive = "1.0.143"
+serde_json = "1.0.83"
+slug = "0.1.4"
+tokio = { version = "1.20.1", features = ["rt", "macros", "rt-multi-thread"] }
+tracing = "0.1.36"
+tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt"] }

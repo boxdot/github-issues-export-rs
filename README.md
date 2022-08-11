@@ -1,4 +1,4 @@
-# github-issues-export [![Build Status](https://travis-ci.org/boxdot/github-issues-export-rs.svg?branch=master)](https://travis-ci.org/boxdot/github-issues-export-rs)
+# github-issues-export
 Export GitHub issues to markdown files.
 
 ## Usage:

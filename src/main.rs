@@ -7,9 +7,7 @@ use anyhow::{anyhow, bail};
 use argh::FromArgs;
 use futures::StreamExt;
 use handlebars::Handlebars;
-use headers::{
-    authorization::Bearer, Authorization, ContentLength, ContentType, HeaderMapExt, UserAgent,
-};
+use headers::{authorization::Bearer, Authorization, ContentType, HeaderMapExt, UserAgent};
 use hyper::{
     client::{Client, HttpConnector},
     Body, Request,
@@ -87,11 +85,7 @@ impl Github {
 
     async fn issues(
         &self,
-        Query {
-            username,
-            repo,
-            issue,
-        }: &Query,
+        Query { username, repo, .. }: &Query,
         state: State,
     ) -> anyhow::Result<Vec<model::Issue>> {
         self.get(&format!(

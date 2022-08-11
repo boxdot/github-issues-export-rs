@@ -1,10 +1,25 @@
-# github-issues-export [![Build Status](https://travis-ci.org/boxdot/github-issues-export-rs.svg?branch=master)](https://travis-ci.org/boxdot/github-issues-export-rs)
+# github-issues-export
+
+[![crates-badge]][crates-url]
+[![docs-badge]][docs-url]
+[![license-badge]][license]
+[![ci-badge]][ci-url]
+
+[crates-badge]: https://img.shields.io/crates/v/github-issues-exportgithub-issues-export.svg
+[crates-url]: https://crates.io/crates/github-issues-export
+[docs-badge]: https://docs.rs/github-issues-export/badge.svg
+[docs-url]: https://docs.rs/github-issues-export
+[license-badge]: https://img.shields.io/crates/l/github-issues-export.svg
+[license]: #license
+[ci-badge]: https://github.com/boxdot/github-issues-export-rs/workflows/rust/badge.svg
+[ci-url]: https://github.com/boxdot/github-issues-export-rs/actions
+
 Export GitHub issues to markdown files.
 
-## Usage:
+## Usage
 
-```
-export GITHUB_TOKEN=<your_secret_token>
+```shell
+export GITHUB_TOKEN=<your_secret_token> # or put it in .env
 github-issues-export username/repo[#issue_number]
 ```
 
